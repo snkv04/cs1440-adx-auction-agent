@@ -1,17 +1,17 @@
 from agt_server.agents.base_agents.adx_agent import NDaysNCampaignsAgent
 from agt_server.agents.test_agents.adx.tier1.my_agent import Tier1NDaysNCampaignsAgent
 from agt_server.local_games.adx_arena import AdXGameSimulator, CONFIG
-from agt_server.agents.utils.adx.structures import Bid, Campaign, BidBundle, MarketSegment 
+from agt_server.agents.utils.adx.structures import Bid, Campaign, BidBundle, MarketSegment
 from typing import Set, Dict
-import random
 
 USER_SEGMENT_PMF = CONFIG['user_segment_pmf']
+
 
 class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
 
     def __init__(self):
         super().__init__()
-        self.name = random.choice(["".join("qwertyuiopasdfghjklzxcvbnm"[random.choice(list(range(26)))] for _ in range(8)) for _ in range(8)])
+        self.name = 'Agent 6-7'
         self.on_new_game()
         self.min_profit_margin = 0.10
         self.target_effective_reach = 1.05
@@ -29,7 +29,7 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
     def increment_demand_values(self, campaign: Campaign) -> None:
         target_segment = campaign.target_segment
         reach = campaign.reach
-        
+
         # Find all atomic segments that contain the target segment
         matching_atomic_segments = []
         for atomic_seg in USER_SEGMENT_PMF.keys():
@@ -38,7 +38,7 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
 
         if not matching_atomic_segments:
             return
-        
+
         # Calculate total PMF for matching segments
         total_pmf = sum(USER_SEGMENT_PMF[seg] for seg in matching_atomic_segments)
         if total_pmf == 0:
@@ -54,10 +54,10 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
         demand = self.old_demand[target_segment]
         population = CONFIG['market_segment_pop'][target_segment]
         current_day = self.get_current_day()
-        
+
         if population * current_day == 0:
             return self.delta
-        
+
         ratio = demand / (population * current_day) + self.delta
         return ratio
 
@@ -70,7 +70,7 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
 
         if not matching_atomic_segments:
             return self.delta
-        
+
         # Collect CPC estimates and populations for matching atomic segments
         cpc_estimates = []
         populations = []
@@ -78,42 +78,42 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
         for atomic_seg in matching_atomic_segments:
             cpc = self.get_atomic_segment_cpc_estimate(atomic_seg)
             population = CONFIG['market_segment_pop'][atomic_seg]
-            
+
             cpc_estimates.append(cpc)
             populations.append(population)
             total_population += population
-        
+
         # Compute weighted average based on populations (which includes delta)
         weighted_sum = sum(cpc * pop for cpc, pop in zip(cpc_estimates, populations))
         weighted_avg = weighted_sum / total_population
-        
+
         return weighted_avg
 
-    def get_campaign_bids(self, campaigns_for_auction:  Set[Campaign]) -> Dict[Campaign, float]:
+    def get_campaign_bids(self, campaigns_for_auction: Set[Campaign]) -> Dict[Campaign, float]:
         bids = {}
         Q_A = self.get_quality_score()
 
         for campaign in campaigns_for_auction:
             # Increment demand values for this campaign (for the next day)
             self.increment_demand_values(campaign)
-            
+
             R = campaign.reach
             target_segment = campaign.target_segment
-                        
+
             # Find maximum possible cost
-            estimated_cpc = self.get_segment_cpc_estimate(target_segment) 
+            estimated_cpc = self.get_segment_cpc_estimate(target_segment)
             K_max = R * estimated_cpc
-            
+
             # Get target effective bid
-            rho_factor = self.target_effective_reach - self.min_profit_margin 
-            if rho_factor <= 0: 
-                continue 
+            rho_factor = self.target_effective_reach - self.min_profit_margin
+            if rho_factor <= 0:
+                continue
             B_target = K_max / rho_factor
 
             # Get actual bid from target effective bid
             B_bid = B_target * Q_A
             final_bid = self.clip_campaign_bid(campaign, B_bid)
-            
+
             bids[campaign] = final_bid
 
         return bids
@@ -122,9 +122,9 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
         if R == 0:
             return 0.0
 
-        x_over_R = x / R        
+        x_over_R = x / R
         u = self.a * x_over_R - self.b
-        return 2 / (R * (1 + u**2))
+        return 2 / (R * (1 + u ** 2))
 
     def get_ad_bids(self) -> Set[BidBundle]:
         bundles = set()
@@ -137,13 +137,13 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
             B = campaign.budget
             K_c = self.get_cumulative_cost(campaign)
             x_c = self.get_cumulative_reach(campaign)
-            
+
             # Spread remaining budget over remaining days
             remaining_budget = B - K_c
             days_left = campaign.end_day - current_day + 1
             L_C = min(remaining_budget, remaining_budget / days_left)
             L_C = max(0.01, L_C)
-            
+
             # Set up bid entries
             bid_entries = set()
             d_rho_dx = self.derivative_effective_reach(x_c, R)
@@ -171,6 +171,7 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
         self.new_demand = {seg: 0.0 for seg in USER_SEGMENT_PMF.keys()}
 
         return bundles
+
 
 if __name__ == "__main__":
     # Here's an opportunity to test offline against some TA agents. Just run this file to do so.
