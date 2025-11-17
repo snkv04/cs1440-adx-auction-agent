@@ -11,7 +11,7 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
 
     def __init__(self):
         super().__init__()
-        self.name = 'Agent 6-7'
+        self.name = 'Agent 67'
         self.on_new_game()
         self.min_profit_margin = 0.10
         self.target_effective_reach = 1.05
@@ -122,8 +122,7 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
         if R == 0:
             return 0.0
 
-        x_over_R = x / R
-        u = self.a * x_over_R - self.b
+        u = self.a * float(x) / R - self.b
         return 2 / (R * (1 + u ** 2))
 
     def get_ad_bids(self) -> Set[BidBundle]:
@@ -166,9 +165,10 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
             )
             bundles.add(bundle)
 
-        # Replace old_demand with new_demand for the next day
+        # Replace old_demand with new_demand for the next day, and rollover the remaining demand to the next day
         self.old_demand = self.new_demand.copy()
-        self.new_demand = {seg: 0.0 for seg in USER_SEGMENT_PMF.keys()}
+        self.new_demand = {seg: max(0, self.new_demand[seg] - CONFIG['market_segment_pop'][seg])
+                           for seg in USER_SEGMENT_PMF.keys()}
 
         return bundles
 
