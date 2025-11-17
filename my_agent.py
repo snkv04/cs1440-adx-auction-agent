@@ -34,7 +34,7 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
         else:
             self.min_profit_margin_per_day = min_profit_margin_per_day
 
-        self.name = '67RandomSearch'
+        self.name = '67'
         self.on_new_game()
         self.min_profit_margin_per_day = DEFAULT_PMPD
         self.target_effective_reach_per_day = DEFAULT_TERPD
