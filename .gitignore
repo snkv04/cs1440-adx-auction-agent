@@ -53,3 +53,6 @@ venv.bak/
 
 # Cython debug symbols
 cython_debug/
+
+# outputs of search algorithms
+random-search.txt

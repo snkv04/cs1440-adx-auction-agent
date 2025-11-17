@@ -6,20 +6,42 @@ from typing import Set, Dict
 
 USER_SEGMENT_PMF = CONFIG['user_segment_pmf']
 
+# Naive algorithm with fixed values for every day
+# DEFAULT_PMPD = [0.1] * 10
+# DEFAULT_TERPD = [1.05] * 10
+# DEFAULT_DELTA = 0.5
+
+# Values taken from random search (100 trials, 20 simulations against 9 TA agents each trial)
+#TODO: Find better values by optimizing the search algorithm or by parallelizing it and running more trials
+
+DEFAULT_PMPD = [0.1163371675003882, 0.4279077497658217, 0.33039941414955043, 0.4636905738076924, 0.304705079633537,
+                0.3642802111239367, 0.11941364846351998, 0.36708912677673144, -0.20819745487867208, 0.36444456734135267]
+DEFAULT_TERPD = [0.5972415188303304, 0.7086170543251538, 0.894760722723549, 0.7226448692379133, 0.6104969998657349,
+                 0.5726331956644954, 1.250356796499879, 1.1727459612802131, 0.7737415994742944, 1.2251823483223607]
+DEFAULT_DELTA = 0.6819
 
 class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
 
-    def __init__(self):
+    def __init__(self, delta=DEFAULT_DELTA, min_profit_margin_per_day=None, target_effective_reach_per_day=None):
         super().__init__()
-        self.name = 'Agent 67'
+
+        if target_effective_reach_per_day is None:
+            self.target_effective_reach_per_day = DEFAULT_TERPD
+        else:
+            self.target_effective_reach_per_day = target_effective_reach_per_day
+        if min_profit_margin_per_day is None:
+            self.min_profit_margin_per_day = DEFAULT_PMPD
+        else:
+            self.min_profit_margin_per_day = min_profit_margin_per_day
+
+        self.name = '67RandomSearch'
         self.on_new_game()
-        self.min_profit_margin = 0.10
-        self.target_effective_reach = 1.05
+        self.min_profit_margin_per_day = DEFAULT_PMPD
+        self.target_effective_reach_per_day = DEFAULT_TERPD
         self.a = 4.08577
         self.b = 3.08577
-        self.delta = 0.5
-        self.old_demand = {seg: 0.0 for seg in USER_SEGMENT_PMF.keys()}
-        self.new_demand = {seg: 0.0 for seg in USER_SEGMENT_PMF.keys()}
+        # Assumed daily baseline demand for each segment
+        self.delta = delta
 
     def on_new_game(self) -> None:
         # Reset demand tracking for new game
@@ -50,6 +72,7 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
                 proportion = USER_SEGMENT_PMF[seg] / total_pmf
                 self.new_demand[seg] += reach * proportion
 
+    # TODO: Replace with a better cpc estimator
     def get_atomic_segment_cpc_estimate(self, target_segment: MarketSegment) -> float:
         demand = self.old_demand[target_segment]
         population = CONFIG['market_segment_pop'][target_segment]
@@ -90,6 +113,8 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
         return weighted_avg
 
     def get_campaign_bids(self, campaigns_for_auction: Set[Campaign]) -> Dict[Campaign, float]:
+        min_profit_margin = self.min_profit_margin_per_day[self.get_current_day()]
+        target_effective_reach = self.target_effective_reach_per_day[self.get_current_day()]
         bids = {}
         Q_A = self.get_quality_score()
 
@@ -105,7 +130,7 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
             K_max = R * estimated_cpc
 
             # Get target effective bid
-            rho_factor = self.target_effective_reach - self.min_profit_margin
+            rho_factor = target_effective_reach - min_profit_margin
             if rho_factor <= 0:
                 continue
             B_target = K_max / rho_factor
@@ -174,9 +199,12 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
 
 
 if __name__ == "__main__":
+    agent = MyNDaysNCampaignsAgent()
     # Here's an opportunity to test offline against some TA agents. Just run this file to do so.
-    test_agents = [MyNDaysNCampaignsAgent()] + [Tier1NDaysNCampaignsAgent(name=f"Agent {i + 1}") for i in range(9)]
+    test_agents = [agent] + [Tier1NDaysNCampaignsAgent(name=f"Agent {i + 1}") for i in range(9)]
 
     # Don't change this. Adapt initialization to your environment
     simulator = AdXGameSimulator()
-    simulator.run_simulation(agents=test_agents, num_simulations=10)
+    profits = simulator.run_simulation(agents=test_agents, num_simulations=10)
+
+    print(profits[agent.name])
