@@ -1,9 +1,9 @@
-from agt_server.agents.base_agents.adx_agent import NDaysNCampaignsAgent
-from agt_server.agents.test_agents.adx.tier1.my_agent import Tier1NDaysNCampaignsAgent
-from agt_server.agents.test_agents.adx.tier2.my_agent import Tier2NDaysNCampaignsAgent
-from agt_server.local_games.adx_arena import AdXGameSimulator, CONFIG
-from agt_server.agents.utils.adx.structures import Bid, Campaign, BidBundle, MarketSegment
 from typing import Set, Dict
+
+from agt_server.agents.base_agents.adx_agent import NDaysNCampaignsAgent
+from agt_server.agents.test_agents.adx.tier2.my_agent import Tier2NDaysNCampaignsAgent
+from agt_server.agents.utils.adx.structures import Bid, Campaign, BidBundle, MarketSegment
+from agt_server.local_games.adx_arena import AdXGameSimulator, CONFIG
 
 USER_SEGMENT_PMF = CONFIG['user_segment_pmf']
 
@@ -36,7 +36,6 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
             self.min_profit_margin_per_day = DEFAULT_PMPD
         else:
             self.min_profit_margin_per_day = min_profit_margin_per_day
-
         self.name = name
         self.on_new_game()
         self.min_profit_margin_per_day = DEFAULT_PMPD
@@ -209,4 +208,5 @@ if __name__ == "__main__":
     # Don't change this. Adapt initialization to your environment
     simulator = AdXGameSimulator()
     profits = simulator.run_simulation(agents=test_agents, num_simulations=10)
-    # print(profits[agent.name])
+    print(profits[agent.name])
+
