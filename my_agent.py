@@ -1,5 +1,6 @@
 from agt_server.agents.base_agents.adx_agent import NDaysNCampaignsAgent
 from agt_server.agents.test_agents.adx.tier1.my_agent import Tier1NDaysNCampaignsAgent
+from agt_server.agents.test_agents.adx.tier2.my_agent import Tier2NDaysNCampaignsAgent
 from agt_server.local_games.adx_arena import AdXGameSimulator, CONFIG
 from agt_server.agents.utils.adx.structures import Bid, Campaign, BidBundle, MarketSegment
 from typing import Set, Dict
@@ -7,22 +8,24 @@ from typing import Set, Dict
 USER_SEGMENT_PMF = CONFIG['user_segment_pmf']
 
 # Naive algorithm with fixed values for every day
-# DEFAULT_PMPD = [0.1] * 10
-# DEFAULT_TERPD = [1.05] * 10
-# DEFAULT_DELTA = 0.5
+DEFAULT_PMPD = [0.1] * 10
+DEFAULT_TERPD = [1.05] * 10
+DEFAULT_DELTA = 0.5
 
 # Values taken from random search (100 trials, 20 simulations against 9 TA agents each trial)
-#TODO: Find better values by optimizing the search algorithm or by parallelizing it and running more trials
+# TODO: Find better values by optimizing the search algorithm or by parallelizing it and running more trials
 
-DEFAULT_PMPD = [0.1163371675003882, 0.4279077497658217, 0.33039941414955043, 0.4636905738076924, 0.304705079633537,
-                0.3642802111239367, 0.11941364846351998, 0.36708912677673144, -0.20819745487867208, 0.36444456734135267]
-DEFAULT_TERPD = [0.5972415188303304, 0.7086170543251538, 0.894760722723549, 0.7226448692379133, 0.6104969998657349,
-                 0.5726331956644954, 1.250356796499879, 1.1727459612802131, 0.7737415994742944, 1.2251823483223607]
-DEFAULT_DELTA = 0.6819
+# DEFAULT_PMPD = [-0.0908596600415657, 0.011521416548170182, 0.437711451917706, 0.07221253943738859, 0.22222108975024368,
+#                 0.3282833859464884, -0.18276519057456622, 0.03547569346633139, 0.3534264368022224, 0.23073348247969566]
+# DEFAULT_TERPD = [0.8492241819443667, 0.9550482828725272, 0.5752824599643729, 1.299400692162302, 1.3682286577672906,
+#                  0.9621224930988295, 1.0337128659510504, 1.3617249774216693, 1.140866958439885, 1.0672371059606476]
+# DEFAULT_DELTA = 0.06844647454670605
+
 
 class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
 
-    def __init__(self, delta=DEFAULT_DELTA, min_profit_margin_per_day=None, target_effective_reach_per_day=None):
+    def __init__(self, name='67', delta=DEFAULT_DELTA, min_profit_margin_per_day=None,
+                 target_effective_reach_per_day=None):
         super().__init__()
 
         if target_effective_reach_per_day is None:
@@ -34,7 +37,7 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
         else:
             self.min_profit_margin_per_day = min_profit_margin_per_day
 
-        self.name = '67RandomSearch'
+        self.name = name
         self.on_new_game()
         self.min_profit_margin_per_day = DEFAULT_PMPD
         self.target_effective_reach_per_day = DEFAULT_TERPD
@@ -201,10 +204,9 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
 if __name__ == "__main__":
     agent = MyNDaysNCampaignsAgent()
     # Here's an opportunity to test offline against some TA agents. Just run this file to do so.
-    test_agents = [agent] + [Tier1NDaysNCampaignsAgent(name=f"Agent {i + 1}") for i in range(9)]
+    test_agents = [agent] + [Tier2NDaysNCampaignsAgent(name=f"Agent {i + 1}") for i in range(9)]
 
     # Don't change this. Adapt initialization to your environment
     simulator = AdXGameSimulator()
     profits = simulator.run_simulation(agents=test_agents, num_simulations=10)
-
-    print(profits[agent.name])
+    # print(profits[agent.name])
