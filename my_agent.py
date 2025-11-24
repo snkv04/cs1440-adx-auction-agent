@@ -86,33 +86,26 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
         ratio = demand / (population * current_day) + self.delta
         return ratio
 
-    def get_segment_cpc_estimate(self, target_segment: MarketSegment) -> float:
-        # Find all atomic segments that contain the target segment
-        matching_atomic_segments = []
-        for atomic_seg in USER_SEGMENT_PMF.keys():
+    def get_segment_cpc_estimate(self, target_segment: MarketSegment, impressions_needed: int) -> float:
+        n = 10
+        f_lower = 0.5
+        f_upper = 1
+
+        segment_population = CONFIG['market_segment_pop'][target_segment]
+        segment_total_demand = 0.0
+        for atomic_seg in self.old_demand.keys():
             if target_segment.issubset(atomic_seg):
-                matching_atomic_segments.append(atomic_seg)
+                segment_total_demand += self.old_demand[atomic_seg]
 
-        if not matching_atomic_segments:
-            return self.delta
+        # average_demand_per_agent = segment_total_demand / n
 
-        # Collect CPC estimates and populations for matching atomic segments
-        cpc_estimates = []
-        populations = []
-        total_population = 0
-        for atomic_seg in matching_atomic_segments:
-            cpc = self.get_atomic_segment_cpc_estimate(atomic_seg)
-            population = CONFIG['market_segment_pop'][atomic_seg]
+        k = max(2, min(n, round(n * (segment_population - impressions_needed) / segment_population) + 1))
 
-            cpc_estimates.append(cpc)
-            populations.append(population)
-            total_population += population
+        expected_cpc = f_lower + (f_upper - f_lower) * (n - k + 1) / (n + 1)
+        competition_ratio = segment_total_demand / segment_population
+        final_cpc = expected_cpc * max(1.0, min(1.5, competition_ratio))
 
-        # Compute weighted average based on populations (which includes delta)
-        weighted_sum = sum(cpc * pop for cpc, pop in zip(cpc_estimates, populations))
-        weighted_avg = weighted_sum / total_population
-
-        return weighted_avg
+        return final_cpc
 
     def get_campaign_bids(self, campaigns_for_auction: Set[Campaign]) -> Dict[Campaign, float]:
         min_profit_margin = self.min_profit_margin_per_day[self.get_current_day()]
@@ -128,7 +121,7 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
             target_segment = campaign.target_segment
 
             # Find maximum possible cost
-            estimated_cpc = self.get_segment_cpc_estimate(target_segment)
+            estimated_cpc = self.get_segment_cpc_estimate(target_segment, R)
             K_max = R * estimated_cpc
 
             # Get target effective bid
