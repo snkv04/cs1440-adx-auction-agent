@@ -2,6 +2,7 @@ from typing import Set, Dict, Tuple
 import math
 
 from agt_server.agents.base_agents.adx_agent import NDaysNCampaignsAgent
+from agt_server.agents.test_agents.adx.tier1.my_agent import Tier1NDaysNCampaignsAgent
 from agt_server.agents.test_agents.adx.tier2.my_agent import Tier2NDaysNCampaignsAgent
 from agt_server.agents.utils.adx.structures import Bid, Campaign, BidBundle, MarketSegment
 from agt_server.local_games.adx_arena import AdXGameSimulator, CONFIG
@@ -118,7 +119,7 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
         return bid_to_beat * num_users
 
     def get_scaled_demand(self, day: int, atomic_segment: MarketSegment, campaign_start: int) -> float:
-        """Gamma_{e, a} = gamma^{e - c_l} * D_{e, a}, where e \in [c_l, c_r]"""
+        """Gamma_{e, a} = gamma^{e - c_l} * D_{e, a}, where e is in [c_l, c_r]"""
         pop = MARKET_SEGMENT_POP[atomic_segment]
         base_demand = self.demand[(day, atomic_segment)]
 
