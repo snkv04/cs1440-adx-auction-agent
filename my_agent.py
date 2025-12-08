@@ -23,8 +23,14 @@ DEFAULT_B = 3.08577
 
 class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
 
-    def __init__(self, name='67', gamma=DEFAULT_GAMMA, omega=DEFAULT_OMEGA,
-                 tau=DEFAULT_TAU, epsilon=DEFAULT_EPSILON, a=DEFAULT_A, b=DEFAULT_B,
+    def __init__(self,
+                 name='956f1f38-b6cb-43ea-9811-a2c0764a67d9',
+                 gamma=DEFAULT_GAMMA,
+                 omega=DEFAULT_OMEGA,
+                 tau=DEFAULT_TAU,
+                 epsilon=DEFAULT_EPSILON,
+                 a=DEFAULT_A,
+                 b=DEFAULT_B,
                  rank_offset=DEFAULT_RANK_OFFSET):
         super().__init__()
         self.name = name
