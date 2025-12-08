@@ -10,10 +10,11 @@ USER_SEGMENT_PMF = CONFIG['user_segment_pmf']
 MARKET_SEGMENT_POP = CONFIG['market_segment_pop']
 
 # Hyperparameters
-DEFAULT_GAMMA = 1.05    # Scaling factor for anticipated demand increase (gamma >= 1)
-DEFAULT_OMEGA = 0.1     # Baseline hidden demand factor per population (omega)
-DEFAULT_TAU = 0.9       # Lower bound for target reach ratio (tau)
-DEFAULT_EPSILON = 0.001 # Small amount to bid above the expected order statistic
+DEFAULT_GAMMA = 1.05        # Scaling factor for anticipated demand increase (gamma >= 1)
+DEFAULT_OMEGA = 0.1         # Baseline hidden demand factor per population (omega)
+DEFAULT_TAU = 0.9           # Lower bound for target reach ratio (tau)
+DEFAULT_EPSILON = 0.001     # Small amount to bid above the expected order statistic
+DEFAULT_RANK_OFFSET = 1e6   # Offset added to computed rank (makes bids more conservative)
 
 # Effective reach constants
 DEFAULT_A = 4.08577
@@ -23,7 +24,8 @@ DEFAULT_B = 3.08577
 class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
 
     def __init__(self, name='67', gamma=DEFAULT_GAMMA, omega=DEFAULT_OMEGA,
-                 tau=DEFAULT_TAU, epsilon=DEFAULT_EPSILON, a=DEFAULT_A, b=DEFAULT_B):
+                 tau=DEFAULT_TAU, epsilon=DEFAULT_EPSILON, a=DEFAULT_A, b=DEFAULT_B,
+                 rank_offset=DEFAULT_RANK_OFFSET):
         super().__init__()
         self.name = name
 
@@ -34,6 +36,7 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
         self.epsilon = epsilon
         self.a = a
         self.b = b
+        self.rank_offset = rank_offset
 
         # Target reaches for each campaign (computed during campaign bidding)
         self.campaign_target_reach: Dict[int, int] = {}
@@ -82,6 +85,9 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
                 demand_increment = reach_per_day * proportion
                 self.demand[(day, atomic_seg)] += demand_increment
 
+    def clip_rank(self, rank: int) -> int:
+        return max(1, min(10, rank))
+
     def get_rank_to_beat(self, day: int, atomic_segment: MarketSegment, target_reach: float) -> int:
         pop = MARKET_SEGMENT_POP[atomic_segment]
         demand = self.demand[(day, atomic_segment)]
@@ -95,11 +101,12 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
 
         users_we_dont_need = pop - target_reach
         rank = int(users_we_dont_need / demand_per_agent) + 1
-        return max(1, min(9, rank))
+        return self.clip_rank(rank)
 
     def get_user_bid_from_rank(self, rank: int) -> float:
         """Assumes a uniform distribution of bids for each agent"""
-        return 1.0 - rank / 10.0
+        adjusted_rank = self.clip_rank(rank + self.rank_offset)
+        return 1.0 - adjusted_rank / 10.0
 
     def get_expected_cost_for_users(self, num_users: float, bid_to_beat: float) -> float:
         return bid_to_beat * num_users
@@ -145,7 +152,7 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
                 demand_per_agent = scaled_demand / 9.0 if scaled_demand > 0 else 0.001
                 users_we_dont_need = atomic_pop - atomic_target
                 rank = int(users_we_dont_need / demand_per_agent) + 1 if demand_per_agent > 0 else 9
-                rank = max(1, min(9, rank))
+                rank = self.clip_rank(rank)
 
                 # Expected cost using scaled rank
                 bid = self.get_user_bid_from_rank(rank)
@@ -302,7 +309,7 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
 
             bundle = BidBundle(
                 campaign_id=campaign.uid,
-                limit=max(0.01, total_limit),
+                limit=total_limit,
                 bid_entries=bid_entries
             )
             bundles.add(bundle)
