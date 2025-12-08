@@ -1,4 +1,5 @@
-from typing import Set, Dict
+from typing import Set, Dict, Tuple
+import math
 
 from agt_server.agents.base_agents.adx_agent import NDaysNCampaignsAgent
 from agt_server.agents.test_agents.adx.tier2.my_agent import Tier2NDaysNCampaignsAgent
@@ -6,200 +7,314 @@ from agt_server.agents.utils.adx.structures import Bid, Campaign, BidBundle, Mar
 from agt_server.local_games.adx_arena import AdXGameSimulator, CONFIG
 
 USER_SEGMENT_PMF = CONFIG['user_segment_pmf']
+MARKET_SEGMENT_POP = CONFIG['market_segment_pop']
 
-# Naive algorithm with fixed values for every day
-DEFAULT_PMPD = [0.1] * 10
-DEFAULT_TERPD = [1.05] * 10
-DEFAULT_DELTA = 0.5
+# Hyperparameters
+DEFAULT_GAMMA = 1.05    # Scaling factor for anticipated demand increase (gamma >= 1)
+DEFAULT_OMEGA = 0.1     # Baseline hidden demand factor per population (omega)
+DEFAULT_TAU = 0.9       # Lower bound for target reach ratio (tau)
+DEFAULT_EPSILON = 0.001 # Small amount to bid above the expected order statistic
 
-# Values taken from random search (100 trials, 20 simulations against 9 TA agents each trial)
-# TODO: Find better values by optimizing the search algorithm or by parallelizing it and running more trials
-
-# DEFAULT_PMPD = [-0.0908596600415657, 0.011521416548170182, 0.437711451917706, 0.07221253943738859, 0.22222108975024368,
-#                 0.3282833859464884, -0.18276519057456622, 0.03547569346633139, 0.3534264368022224, 0.23073348247969566]
-# DEFAULT_TERPD = [0.8492241819443667, 0.9550482828725272, 0.5752824599643729, 1.299400692162302, 1.3682286577672906,
-#                  0.9621224930988295, 1.0337128659510504, 1.3617249774216693, 1.140866958439885, 1.0672371059606476]
-# DEFAULT_DELTA = 0.06844647454670605
+# Effective reach constants
+DEFAULT_A = 4.08577
+DEFAULT_B = 3.08577
 
 
 class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
 
-    def __init__(self, name='67', delta=DEFAULT_DELTA, min_profit_margin_per_day=None,
-                 target_effective_reach_per_day=None):
+    def __init__(self, name='67', gamma=DEFAULT_GAMMA, omega=DEFAULT_OMEGA,
+                 tau=DEFAULT_TAU, epsilon=DEFAULT_EPSILON, a=DEFAULT_A, b=DEFAULT_B):
         super().__init__()
-
-        if target_effective_reach_per_day is None:
-            self.target_effective_reach_per_day = DEFAULT_TERPD
-        else:
-            self.target_effective_reach_per_day = target_effective_reach_per_day
-        if min_profit_margin_per_day is None:
-            self.min_profit_margin_per_day = DEFAULT_PMPD
-        else:
-            self.min_profit_margin_per_day = min_profit_margin_per_day
         self.name = name
+
+        # Hyperparameters
+        self.gamma = gamma
+        self.omega = omega
+        self.tau = tau
+        self.epsilon = epsilon
+        self.a = a
+        self.b = b
+
+        # Target reaches for each campaign (computed during campaign bidding)
+        self.campaign_target_reach: Dict[int, int] = {}
+
         self.on_new_game()
-        self.min_profit_margin_per_day = DEFAULT_PMPD
-        self.target_effective_reach_per_day = DEFAULT_TERPD
-        self.a = 4.08577
-        self.b = 3.08577
-        # Assumed daily baseline demand for each segment
-        self.delta = delta
 
     def on_new_game(self) -> None:
-        # Reset demand tracking for new game
-        self.old_demand = {seg: 0.0 for seg in USER_SEGMENT_PMF.keys()}
-        self.new_demand = {seg: 0.0 for seg in USER_SEGMENT_PMF.keys()}
+        self.demand: Dict[Tuple[int, MarketSegment], float] = {}
+        for day in range(1, 11):
+            for atomic_seg in USER_SEGMENT_PMF.keys():
+                pop = MARKET_SEGMENT_POP[atomic_seg]
+                self.demand[(day, atomic_seg)] = self.omega * pop
+
+        self.undecided_campaigns: Set[Campaign] = set()
+        self.campaign_target_reach = {}
+
+    def get_atomic_segments(self, segment: MarketSegment) -> list:
+        matching = []
+        for atomic_seg in USER_SEGMENT_PMF.keys():
+            if segment.issubset(atomic_seg):
+                matching.append(atomic_seg)
+        return matching
 
     def increment_demand_values(self, campaign: Campaign) -> None:
+        """Update demand values for a campaign we didn't win"""
         target_segment = campaign.target_segment
         reach = campaign.reach
+        start_day = campaign.start_day
+        end_day = campaign.end_day
+        num_days = end_day - start_day + 1
 
-        # Find all atomic segments that contain the target segment
-        matching_atomic_segments = []
-        for atomic_seg in USER_SEGMENT_PMF.keys():
-            if target_segment.issubset(atomic_seg):
-                matching_atomic_segments.append(atomic_seg)
-
-        if not matching_atomic_segments:
+        atomic_segments = self.get_atomic_segments(target_segment)
+        if not atomic_segments:
             return
 
-        # Calculate total PMF for matching segments
-        total_pmf = sum(USER_SEGMENT_PMF[seg] for seg in matching_atomic_segments)
-        if total_pmf == 0:
-            portion_per_segment = reach / len(matching_atomic_segments)
-            for seg in matching_atomic_segments:
-                self.new_demand[seg] += portion_per_segment
-        else:
-            for seg in matching_atomic_segments:
-                proportion = USER_SEGMENT_PMF[seg] / total_pmf
-                self.new_demand[seg] += reach * proportion
+        segment_pop = MARKET_SEGMENT_POP[target_segment]
+        if segment_pop == 0:
+            return
 
-    # TODO: Replace with a better cpc estimator
-    def get_atomic_segment_cpc_estimate(self, target_segment: MarketSegment) -> float:
-        demand = self.old_demand[target_segment]
-        population = CONFIG['market_segment_pop'][target_segment]
-        current_day = self.get_current_day()
+        # Distribute reach across days and atomic segments proportionally
+        reach_per_day = reach / num_days
+        for day in range(start_day, end_day + 1):
+            for atomic_seg in atomic_segments:
+                atomic_pop = MARKET_SEGMENT_POP[atomic_seg]
+                proportion = atomic_pop / segment_pop
+                demand_increment = reach_per_day * proportion
+                self.demand[(day, atomic_seg)] += demand_increment
 
-        if population * current_day == 0:
-            return self.delta
+    def get_rank_to_beat(self, day: int, atomic_segment: MarketSegment, target_reach: float) -> int:
+        pop = MARKET_SEGMENT_POP[atomic_segment]
+        demand = self.demand[(day, atomic_segment)]
 
-        ratio = demand / (population * current_day) + self.delta
-        return ratio
+        if demand <= 0:
+            return 9
 
-    def get_segment_cpc_estimate(self, target_segment: MarketSegment, impressions_needed: int) -> float:
-        n = 10
-        f_lower = 0.5
-        f_upper = 1
+        demand_per_agent = demand / 9.0
+        if demand_per_agent <= 0:
+            return 9
 
-        segment_population = CONFIG['market_segment_pop'][target_segment]
-        segment_total_demand = 0.0
-        for atomic_seg in self.old_demand.keys():
-            if target_segment.issubset(atomic_seg):
-                segment_total_demand += self.old_demand[atomic_seg]
+        users_we_dont_need = pop - target_reach
+        rank = int(users_we_dont_need / demand_per_agent) + 1
+        return max(1, min(9, rank))
 
-        # average_demand_per_agent = segment_total_demand / n
+    def get_user_bid_from_rank(self, rank: int) -> float:
+        """Assumes a uniform distribution of bids for each agent"""
+        return 1.0 - rank / 10.0
 
-        k = max(2, min(n, round(n * (segment_population - impressions_needed) / segment_population) + 1))
+    def get_expected_cost_for_users(self, num_users: float, bid_to_beat: float) -> float:
+        return bid_to_beat * num_users
 
-        expected_cpc = f_lower + (f_upper - f_lower) * (n - k + 1) / (n + 1)
-        competition_ratio = segment_total_demand / segment_population
-        final_cpc = expected_cpc * max(1.0, min(1.5, competition_ratio))
+    def get_scaled_demand(self, day: int, atomic_segment: MarketSegment, campaign_start: int) -> float:
+        """Gamma_{e, a} = gamma^{e - c_l} * D_{e, a}, where e \in [c_l, c_r]"""
+        pop = MARKET_SEGMENT_POP[atomic_segment]
+        base_demand = self.demand[(day, atomic_segment)]
 
-        return final_cpc
+        # Scale by gamma^(days since campaign start)
+        days_since_start = day - campaign_start
+        scaling = self.gamma ** days_since_start
+
+        return scaling * base_demand
+
+    def get_expected_cost_for_campaign(self, campaign: Campaign, target_reach: int) -> float:
+        target_segment = campaign.target_segment
+        start_day = campaign.start_day
+        end_day = campaign.end_day
+        num_days = end_day - start_day + 1
+
+        atomic_segments = self.get_atomic_segments(target_segment)
+        if not atomic_segments:
+            return 0.0
+
+        segment_pop = MARKET_SEGMENT_POP[target_segment]
+        if segment_pop == 0:
+            return 0.0
+
+        target_per_day = target_reach / num_days
+        total_cost = 0.0
+        for day in range(start_day, end_day + 1):
+            for atomic_seg in atomic_segments:
+                # t(c, a) for this atomic segment = proportional target reach
+                atomic_pop = MARKET_SEGMENT_POP[atomic_seg]
+                proportion = atomic_pop / segment_pop
+                atomic_target = target_per_day * proportion
+
+                # Use scaled demand for future cost estimation
+                scaled_demand = self.get_scaled_demand(day, atomic_seg, start_day)
+
+                # Compute rank needed with scaled demand
+                demand_per_agent = scaled_demand / 9.0 if scaled_demand > 0 else 0.001
+                users_we_dont_need = atomic_pop - atomic_target
+                rank = int(users_we_dont_need / demand_per_agent) + 1 if demand_per_agent > 0 else 9
+                rank = max(1, min(9, rank))
+
+                # Expected cost using scaled rank
+                bid = self.get_user_bid_from_rank(rank)
+                cost = self.get_expected_cost_for_users(atomic_target, bid)
+                total_cost += cost
+
+        return total_cost
+
+    def effective_reach(self, impressions: int, reach_goal: int) -> float:
+        if reach_goal == 0:
+            return 0.0
+
+        ratio = impressions / reach_goal
+        return (2 / self.a) * (math.atan(self.a * ratio - self.b) - math.atan(-self.b))
 
     def get_campaign_bids(self, campaigns_for_auction: Set[Campaign]) -> Dict[Campaign, float]:
-        min_profit_margin = self.min_profit_margin_per_day[self.get_current_day()]
-        target_effective_reach = self.target_effective_reach_per_day[self.get_current_day()]
         bids = {}
-        Q_A = self.get_quality_score()
+        quality_score = self.get_quality_score()
+
+        # Process undecided campaigns from previous day, by updating demand for campaigns we didn't win
+        active_campaign_ids = {c.uid for c in self.get_active_campaigns()}
+        for campaign in self.undecided_campaigns:
+            if campaign.uid not in active_campaign_ids:
+                # We didn't win this campaign, so update the corresponding demand values
+                self.increment_demand_values(campaign)
+        self.undecided_campaigns.clear()
 
         for campaign in campaigns_for_auction:
-            # Increment demand values for this campaign (for the next day)
-            self.increment_demand_values(campaign)
+            reach_goal = campaign.reach
 
-            R = campaign.reach
-            target_segment = campaign.target_segment
+            # Step 1: Find target reach t(c)
+            # Search in range [ceil(tau * R), ceil(1.38 * R)]
+            min_target = math.ceil(self.tau * reach_goal)
+            max_target = math.ceil(1.38 * reach_goal)
 
-            # Find maximum possible cost
-            estimated_cpc = self.get_segment_cpc_estimate(target_segment, R)
-            K_max = R * estimated_cpc
+            best_target = min_target
+            best_profit = float('-inf')
 
-            # Get target effective bid
-            rho_factor = target_effective_reach - min_profit_margin
-            if rho_factor <= 0:
-                continue
-            B_target = K_max / rho_factor
+            for target in range(min_target, max_target + 1):
+                rho = self.effective_reach(target, reach_goal)
+                expected_cost = self.get_expected_cost_for_campaign(campaign, target)
+                profit = rho * reach_goal - expected_cost
 
-            # Get actual bid from target effective bid
-            B_bid = B_target * Q_A
-            final_bid = self.clip_campaign_bid(campaign, B_bid)
+                if profit > best_profit:
+                    best_profit = profit
+                    best_target = target
 
+            # Store target reach for use in user auction
+            self.campaign_target_reach[campaign.uid] = best_target
+
+            # Step 2: Find bid b(c) ensuring 10% profit margin
+            # b(c) = k(c) / (0.9 * rho(t(c), R))
+            rho = self.effective_reach(best_target, reach_goal)
+            expected_cost = self.get_expected_cost_for_campaign(campaign, best_target)
+
+            assert rho > 0, f"Effective reach is 0 for campaign {campaign.uid}"
+            target_budget = expected_cost / (0.9 * rho)
+
+            # Clip bid to valid range
+            final_bid = self.clip_campaign_bid(campaign, target_budget)
             bids[campaign] = final_bid
+
+        # Add these campaigns to undecided campaigns for next day's demand update
+        self.undecided_campaigns = set(campaigns_for_auction)
 
         return bids
 
-    def derivative_effective_reach(self, x: int, R: int) -> float:
-        if R == 0:
-            return 0.0
-
-        u = self.a * float(x) / R - self.b
-        return 2 / (R * (1 + u ** 2))
-
     def get_ad_bids(self) -> Set[BidBundle]:
         bundles = set()
-
         active_campaigns = self.get_active_campaigns()
         current_day = self.get_current_day()
 
+        if not active_campaigns:
+            return bundles
+
+        # Step 1: Compute target reach t(a) for each atomic segment
+        atomic_target_reach: Dict[MarketSegment, float] = {seg: 0.0 for seg in USER_SEGMENT_PMF.keys()}
+        campaign_atomic_targets: Dict[int, Dict[MarketSegment, float]] = {}
+
         for campaign in active_campaigns:
-            R = campaign.reach
-            B = campaign.budget
-            K_c = self.get_cumulative_cost(campaign)
-            x_c = self.get_cumulative_reach(campaign)
+            # Get target reach for this campaign (default to reach goal if not set)
+            total_target = self.campaign_target_reach.get(campaign.uid, campaign.reach)
 
-            # Spread remaining budget over remaining days
-            remaining_budget = B - K_c
+            # Account for already acquired impressions
+            cumulative_reach = self.get_cumulative_reach(campaign)
+            remaining_target = max(0, total_target - cumulative_reach)
+
+            # Pace evenly over remaining days
             days_left = campaign.end_day - current_day + 1
-            L_C = min(remaining_budget, remaining_budget / days_left)
-            L_C = max(0.01, L_C)
+            if days_left <= 0:
+                continue
+            target_today = remaining_target / days_left
 
-            # Set up bid entries
-            bid_entries = set()
-            d_rho_dx = self.derivative_effective_reach(x_c, R)
-            marginal_revenue = B * d_rho_dx
-            bid_per_item = min(10.0, max(0.01, marginal_revenue))
+            # Distribute across atomic segments proportionally
             target_segment = campaign.target_segment
-            bid_entry = Bid(
-                bidder=self,
-                auction_item=target_segment,
-                bid_per_item=bid_per_item,
-                bid_limit=L_C
-            )
-            bid_entries.add(bid_entry)
+            atomic_segments = self.get_atomic_segments(target_segment)
+            segment_pop = MARKET_SEGMENT_POP[target_segment]
 
-            # Create the BidBundle for the campaign
+            campaign_atomic_targets[campaign.uid] = {}
+            if segment_pop > 0 and atomic_segments:
+                for atomic_seg in atomic_segments:
+                    atomic_pop = MARKET_SEGMENT_POP[atomic_seg]
+                    proportion = atomic_pop / segment_pop
+                    atomic_target = target_today * proportion
+
+                    atomic_target_reach[atomic_seg] += atomic_target
+                    campaign_atomic_targets[campaign.uid][atomic_seg] = atomic_target
+
+        # Step 2: Determine bid for each atomic segment
+        # Bid(a) = E[B(a)_{[r]}] + epsilon where r = rank to beat
+        atomic_bids: Dict[MarketSegment, float] = {}
+
+        for atomic_seg in USER_SEGMENT_PMF.keys():
+            target = atomic_target_reach[atomic_seg]
+            if target <= 0:
+                atomic_bids[atomic_seg] = 0.01  # Minimum bid
+                continue
+
+            rank = self.get_rank_to_beat(current_day, atomic_seg, target)
+            expected_bid = self.get_user_bid_from_rank(rank)
+            # Bid slightly above to win
+            atomic_bids[atomic_seg] = min(1.0, expected_bid + self.epsilon)
+
+        # Step 3: Create BidBundles for each campaign
+        for campaign in active_campaigns:
+            if campaign.uid not in campaign_atomic_targets:
+                continue
+
+            target_segment = campaign.target_segment
+            atomic_segments = self.get_atomic_segments(target_segment)
+
+            bid_entries = set()
+            total_limit = 0.0
+
+            for atomic_seg in atomic_segments:
+                atomic_target = campaign_atomic_targets[campaign.uid].get(atomic_seg, 0)
+                if atomic_target <= 0:
+                    continue
+
+                bid_per_item = atomic_bids[atomic_seg]
+                bid_limit = bid_per_item * atomic_target
+
+                bid_entry = Bid(
+                    bidder=self,
+                    auction_item=atomic_seg,
+                    bid_per_item=max(0.01, min(1.0, bid_per_item)),
+                    bid_limit=max(0.01, bid_limit)
+                )
+                bid_entries.add(bid_entry)
+                total_limit += bid_limit
+
+            if not bid_entries:
+                continue
+
             bundle = BidBundle(
                 campaign_id=campaign.uid,
-                limit=L_C,
+                limit=max(0.01, total_limit),
                 bid_entries=bid_entries
             )
             bundles.add(bundle)
-
-        # Replace old_demand with new_demand for the next day, and rollover the remaining demand to the next day
-        self.old_demand = self.new_demand.copy()
-        self.new_demand = {seg: max(0, self.new_demand[seg] - CONFIG['market_segment_pop'][seg])
-                           for seg in USER_SEGMENT_PMF.keys()}
 
         return bundles
 
 
 if __name__ == "__main__":
     agent = MyNDaysNCampaignsAgent()
-    # Here's an opportunity to test offline against some TA agents. Just run this file to do so.
+    # Test offline against TA agents
     test_agents = [agent] + [Tier2NDaysNCampaignsAgent(name=f"Agent {i + 1}") for i in range(9)]
 
-    # Don't change this. Adapt initialization to your environment
     simulator = AdXGameSimulator()
     profits = simulator.run_simulation(agents=test_agents, num_simulations=10)
     print(profits[agent.name])
-
