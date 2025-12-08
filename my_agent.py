@@ -188,7 +188,7 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
         self.undecided_campaigns.clear()
 
         for campaign in campaigns_for_auction:
-            reach_goal = campaign.reach
+            target_budget = reach_goal = campaign.reach
 
             # Step 1: Find target reach t(c)
             # Search in range [ceil(tau * R), ceil(1.38 * R)]
@@ -201,7 +201,7 @@ class MyNDaysNCampaignsAgent(NDaysNCampaignsAgent):
             for target in range(min_target, max_target + 1):
                 rho = self.effective_reach(target, reach_goal)
                 expected_cost = self.get_expected_cost_for_campaign(campaign, target)
-                profit = rho * reach_goal - expected_cost
+                profit = rho * target_budget - expected_cost
 
                 if profit > best_profit:
                     best_profit = profit
